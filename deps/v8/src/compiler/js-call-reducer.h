@@ -15,6 +15,7 @@ namespace internal {
 
 // Forward declarations.
 class Factory;
+class JSGlobalProxy;
 class VectorSlotPair;
 
 namespace compiler {
@@ -135,7 +136,6 @@ class V8_EXPORT_PRIVATE JSCallReducer final : public AdvancedReducer {
                                         Handle<SharedFunctionInfo> shared);
 
   Reduction ReduceAsyncFunctionPromiseCreate(Node* node);
-  Reduction ReduceAsyncFunctionPromiseRelease(Node* node);
   Reduction ReducePromiseConstructor(Node* node);
   Reduction ReducePromiseInternalConstructor(Node* node);
   Reduction ReducePromiseInternalReject(Node* node);
@@ -182,10 +182,9 @@ class V8_EXPORT_PRIVATE JSCallReducer final : public AdvancedReducer {
                                           InstanceType instance_type,
                                           FieldAccess const& access);
 
-  Reduction ReduceDataViewPrototypeGet(Node* node,
-                                       ExternalArrayType element_type);
-  Reduction ReduceDataViewPrototypeSet(Node* node,
-                                       ExternalArrayType element_type);
+  enum class DataViewAccess { kGet, kSet };
+  Reduction ReduceDataViewAccess(Node* node, DataViewAccess access,
+                                 ExternalArrayType element_type);
 
   Reduction ReduceDatePrototypeGetTime(Node* node);
   Reduction ReduceDateNow(Node* node);

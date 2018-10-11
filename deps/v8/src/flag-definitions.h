@@ -209,18 +209,19 @@ DEFINE_IMPLICATION(harmony_class_fields, harmony_private_fields)
 // Update bootstrapper.cc whenever adding a new feature flag.
 
 // Features that are still work in progress (behind individual flags).
-#define HARMONY_INPROGRESS_BASE(V)                                    \
-  V(harmony_do_expressions, "harmony do-expressions")                 \
-  V(harmony_class_fields, "harmony fields in class literals")         \
-  V(harmony_static_fields, "harmony static fields in class literals") \
-  V(harmony_await_optimization, "harmony await taking 1 tick")
+#define HARMONY_INPROGRESS_BASE(V)                                 \
+  V(harmony_do_expressions, "harmony do-expressions")              \
+  V(harmony_class_fields, "harmony fields in class literals")      \
+  V(harmony_await_optimization, "harmony await taking 1 tick")     \
+  V(harmony_regexp_sequence, "RegExp Unicode sequence properties") \
+  V(harmony_weak_refs, "harmony weak references")
 
 #ifdef V8_INTL_SUPPORT
 #define HARMONY_INPROGRESS(V)                    \
   HARMONY_INPROGRESS_BASE(V)                     \
   V(harmony_locale, "Intl.Locale")               \
   V(harmony_intl_list_format, "Intl.ListFormat") \
-  V(harmony_intl_relative_time_format, "Intl.RelativeTimeFormat")
+  V(harmony_intl_segmenter, "Intl.Segmenter")
 #else
 #define HARMONY_INPROGRESS(V) HARMONY_INPROGRESS_BASE(V)
 #endif
@@ -231,19 +232,26 @@ DEFINE_IMPLICATION(harmony_class_fields, harmony_private_fields)
   V(harmony_private_fields, "harmony private fields in class literals")    \
   V(harmony_numeric_separator, "harmony numeric separator between digits") \
   V(harmony_string_matchall, "harmony String.prototype.matchAll")          \
-  V(harmony_global, "harmony global")
+  V(harmony_static_fields, "harmony static fields in class literals")      \
+  V(harmony_json_stringify, "Well-formed JSON.stringify")
 
 // Features that are shipping (turned on by default, but internal flag remains).
-#define HARMONY_SHIPPING(V)                                              \
-  V(harmony_string_trimming, "harmony String.prototype.trim{Start,End}") \
+#define HARMONY_SHIPPING_BASE(V)                                         \
   V(harmony_sharedarraybuffer, "harmony sharedarraybuffer")              \
-  V(harmony_function_tostring, "harmony Function.prototype.toString")    \
   V(harmony_import_meta, "harmony import.meta property")                 \
-  V(harmony_bigint, "harmony arbitrary precision integers")              \
   V(harmony_dynamic_import, "harmony dynamic import")                    \
   V(harmony_array_prototype_values, "harmony Array.prototype.values")    \
   V(harmony_array_flat, "harmony Array.prototype.{flat,flatMap}")        \
-  V(harmony_symbol_description, "harmony Symbol.prototype.description")
+  V(harmony_symbol_description, "harmony Symbol.prototype.description")  \
+  V(harmony_global, "harmony global")
+
+#ifdef V8_INTL_SUPPORT
+#define HARMONY_SHIPPING(V) \
+  HARMONY_SHIPPING_BASE(V)  \
+  V(harmony_intl_relative_time_format, "Intl.RelativeTimeFormat")
+#else
+#define HARMONY_SHIPPING(V) HARMONY_SHIPPING_BASE(V)
+#endif
 
 // Once a shipping feature has proved stable in the wild, it will be dropped
 // from HARMONY_SHIPPING, all occurrences of the FLAG_ variable are removed,
@@ -326,6 +334,11 @@ DEFINE_VALUE_IMPLICATION(optimize_for_size, max_semi_space_size, 1)
 // Flags for data representation optimizations
 DEFINE_BOOL(unbox_double_arrays, true, "automatically unbox arrays of doubles")
 DEFINE_BOOL_READONLY(string_slices, true, "use string slices")
+
+// Flag to stress different interleavings of tasks.
+DEFINE_BOOL(
+    stress_delay_tasks, false,
+    "delay execution of tasks by 0-100ms randomly (based on --random-seed)")
 
 // Flags for Ignition for no-snapshot builds.
 #undef FLAG
@@ -518,9 +531,6 @@ DEFINE_BOOL(untrusted_code_mitigations, V8_DEFAULT_UNTRUSTED_CODE_MITIGATIONS,
             "Enable mitigations for executing untrusted code")
 #undef V8_DEFAULT_UNTRUSTED_CODE_MITIGATIONS
 
-DEFINE_BOOL(branch_load_poisoning, false, "Mask loads with branch conditions.")
-DEFINE_IMPLICATION(future, branch_load_poisoning)
-
 // Flags to help platform porters
 DEFINE_BOOL(minimal, false,
             "simplifies execution model to make porting "
@@ -536,11 +546,11 @@ DEFINE_BOOL(wasm_disable_structured_cloning, false,
             "disable wasm structured cloning")
 DEFINE_INT(wasm_num_compilation_tasks, 10,
            "number of parallel compilation tasks for wasm")
-DEFINE_DEBUG_BOOL(wasm_trace_native_heap, false,
+DEFINE_DEBUG_BOOL(trace_wasm_native_heap, false,
                   "trace wasm native heap events")
 DEFINE_BOOL(wasm_write_protect_code_memory, false,
             "write protect code memory on the wasm native heap")
-DEFINE_BOOL(wasm_trace_serialization, false,
+DEFINE_BOOL(trace_wasm_serialization, false,
             "trace serialization/deserialization")
 DEFINE_BOOL(wasm_async_compilation, true,
             "enable actual asynchronous compilation for WebAssembly.compile")
@@ -580,7 +590,7 @@ DEFINE_DEBUG_BOOL(trace_liftoff, false,
                   "trace Liftoff, the baseline compiler for WebAssembly")
 DEFINE_DEBUG_BOOL(wasm_break_on_decoder_error, false,
                   "debug break when wasm decoder encounters an error")
-DEFINE_BOOL(wasm_trace_memory, false,
+DEFINE_BOOL(trace_wasm_memory, false,
             "print all memory updates performed in wasm code")
 // Fuzzers use {wasm_tier_mask_for_testing} together with {liftoff} and
 // {no_wasm_tier_up} to force some functions to be compiled with Turbofan.
@@ -815,6 +825,8 @@ DEFINE_BOOL(young_generation_large_objects, false,
             "allocates large objects by default in the young generation large "
             "object space")
 
+DEFINE_BOOL(idle_time_scavenge, true, "Perform scavenges in idle time.")
+
 // assembler-ia32.cc / assembler-arm.cc / assembler-x64.cc
 DEFINE_BOOL(debug_code, DEBUG_BOOL,
             "generate extra code (assertions) for debugging")
@@ -874,8 +886,6 @@ DEFINE_BOOL(expose_trigger_failure, false, "expose trigger-failure extension")
 DEFINE_INT(stack_trace_limit, 10, "number of stack frames to capture")
 DEFINE_BOOL(builtins_in_stack_traces, false,
             "show built-in functions in stack traces")
-DEFINE_BOOL(enable_experimental_builtins, false,
-            "enable new csa-based experimental builtins")
 DEFINE_BOOL(disallow_code_generation_from_strings, false,
             "disallow eval and friends")
 DEFINE_BOOL(expose_async_hooks, false, "expose async_hooks object")
@@ -921,11 +931,6 @@ DEFINE_BOOL(cache_prototype_transitions, true, "cache prototype transitions")
 DEFINE_BOOL(compiler_dispatcher, false, "enable compiler dispatcher")
 DEFINE_BOOL(trace_compiler_dispatcher, false,
             "trace compiler dispatcher activity")
-
-// compiler-dispatcher-job.cc
-DEFINE_BOOL(
-    trace_compiler_dispatcher_jobs, false,
-    "trace progress of individual jobs managed by the compiler dispatcher")
 
 // cpu-profiler.cc
 DEFINE_INT(cpu_profiler_sampling_interval, 1000,
@@ -1009,13 +1014,6 @@ DEFINE_IMPLICATION(trace_maps, log_code)
 
 // parser.cc
 DEFINE_BOOL(allow_natives_syntax, false, "allow natives syntax")
-DEFINE_BOOL(lazy_inner_functions, true, "enable lazy parsing inner functions")
-DEFINE_BOOL(aggressive_lazy_inner_functions, false,
-            "even lazier inner function parsing")
-DEFINE_IMPLICATION(aggressive_lazy_inner_functions, lazy_inner_functions)
-DEFINE_BOOL(preparser_scope_analysis, true,
-            "perform scope analysis for preparsed inner functions")
-DEFINE_IMPLICATION(preparser_scope_analysis, aggressive_lazy_inner_functions)
 
 // simulator-arm.cc, simulator-arm64.cc and simulator-mips.cc
 DEFINE_BOOL(trace_sim, false, "Trace simulator execution")
@@ -1043,6 +1041,9 @@ DEFINE_BOOL(trace_sim_messages, false,
             "Trace simulator debug messages. Implied by --trace-sim.")
 
 // isolate.cc
+DEFINE_BOOL(async_stack_traces, false,
+            "include async stack traces in Error.stack")
+DEFINE_IMPLICATION(async_stack_traces, harmony_await_optimization)
 DEFINE_BOOL(stack_trace_on_illegal, false,
             "print stack trace when an illegal exception is thrown")
 DEFINE_BOOL(abort_on_uncaught_exception, false,
@@ -1086,17 +1087,13 @@ DEFINE_BOOL_READONLY(embedded_builtins, V8_EMBEDDED_BUILTINS_BOOL,
                      "Embed builtin code into the binary.")
 // TODO(jgruber,v8:6666): Remove once ia32 has full embedded builtin support.
 DEFINE_BOOL_READONLY(
-    ia32_verify_root_register, false,
+    ia32_verify_root_register, V8_EMBEDDED_BUILTINS_BOOL,
     "Check that the value of the root register was not clobbered.")
 // TODO(jgruber,v8:6666): Remove once ia32 has full embedded builtin support.
 DEFINE_BOOL(print_embedded_builtin_candidates, false,
             "Prints builtins that are not yet embedded but could be.")
 DEFINE_BOOL(lazy_deserialization, true,
             "Deserialize code lazily from the snapshot.")
-DEFINE_BOOL(lazy_handler_deserialization, true,
-            "Deserialize bytecode handlers lazily from the snapshot.")
-DEFINE_IMPLICATION(lazy_handler_deserialization, lazy_deserialization)
-DEFINE_IMPLICATION(future, lazy_handler_deserialization)
 DEFINE_BOOL(trace_lazy_deserialization, false, "Trace lazy deserialization.")
 DEFINE_BOOL(profile_deserialization, false,
             "Print the time it takes to deserialize the snapshot.")
@@ -1154,6 +1151,9 @@ DEFINE_ARGS(js_arguments,
             "Pass all remaining arguments to the script. Alias for \"--\".")
 DEFINE_BOOL(mock_arraybuffer_allocator, false,
             "Use a mock ArrayBuffer allocator for testing.")
+DEFINE_SIZE_T(mock_arraybuffer_allocator_limit, 0,
+              "Memory limit for mock ArrayBuffer allocator used to simulate "
+              "OOM for testing.")
 
 //
 // GDB JIT integration flags.
@@ -1394,6 +1394,15 @@ DEFINE_IMPLICATION(predictable, single_threaded)
 DEFINE_NEG_IMPLICATION(predictable, memory_reducer)
 DEFINE_VALUE_IMPLICATION(single_threaded, wasm_num_compilation_tasks, 0)
 DEFINE_NEG_IMPLICATION(single_threaded, wasm_async_compilation)
+
+DEFINE_BOOL(predictable_gc_schedule, false,
+            "Predictable garbage collection schedule. Fixes heap growing, "
+            "idle, and memory reducing behavior.")
+DEFINE_VALUE_IMPLICATION(predictable_gc_schedule, min_semi_space_size, 4)
+DEFINE_VALUE_IMPLICATION(predictable_gc_schedule, max_semi_space_size, 4)
+DEFINE_VALUE_IMPLICATION(predictable_gc_schedule, heap_growing_percent, 30)
+DEFINE_NEG_IMPLICATION(predictable_gc_schedule, idle_time_scavenge)
+DEFINE_NEG_IMPLICATION(predictable_gc_schedule, memory_reducer)
 
 //
 // Threading related flags.

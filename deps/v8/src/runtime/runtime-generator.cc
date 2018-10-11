@@ -12,11 +12,31 @@
 namespace v8 {
 namespace internal {
 
+RUNTIME_FUNCTION(Runtime_AsyncFunctionEnter) {
+  // Runtime call is implemented in InterpreterIntrinsics and lowered in
+  // JSIntrinsicLowering
+  UNREACHABLE();
+}
+
+RUNTIME_FUNCTION(Runtime_AsyncFunctionReject) {
+  // Runtime call is implemented in InterpreterIntrinsics and lowered in
+  // JSIntrinsicLowering
+  UNREACHABLE();
+}
+
+RUNTIME_FUNCTION(Runtime_AsyncFunctionResolve) {
+  // Runtime call is implemented in InterpreterIntrinsics and lowered in
+  // JSIntrinsicLowering
+  UNREACHABLE();
+}
+
 RUNTIME_FUNCTION(Runtime_CreateJSGeneratorObject) {
   HandleScope scope(isolate);
   DCHECK_EQ(2, args.length());
   CONVERT_ARG_HANDLE_CHECKED(JSFunction, function, 0);
   CONVERT_ARG_HANDLE_CHECKED(Object, receiver, 1);
+  CHECK_IMPLIES(IsAsyncFunction(function->shared()->kind()),
+                IsAsyncGeneratorFunction(function->shared()->kind()));
   CHECK(IsResumableFunction(function->shared()->kind()));
 
   // Underlying function needs to have bytecode available.
@@ -51,12 +71,6 @@ RUNTIME_FUNCTION(Runtime_GeneratorGetFunction) {
   CONVERT_ARG_HANDLE_CHECKED(JSGeneratorObject, generator, 0);
 
   return generator->function();
-}
-
-RUNTIME_FUNCTION(Runtime_GeneratorGetInputOrDebugPos) {
-  // Runtime call is implemented in InterpreterIntrinsics and lowered in
-  // JSIntrinsicLowering
-  UNREACHABLE();
 }
 
 RUNTIME_FUNCTION(Runtime_AsyncGeneratorResolve) {

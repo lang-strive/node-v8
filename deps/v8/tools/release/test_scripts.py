@@ -934,7 +934,7 @@ TBR=reviewer@chromium.org"""
       Cmd("git commit -aF \"%s\"" % TEST_CONFIG["COMMITMSG_FILE"], "",
           cb=CheckVersionCommit),
       Cmd("git cl upload --send-mail --email \"author@chromium.org\" "
-          "-f --bypass-hooks --gerrit --private", ""),
+          "-f --bypass-hooks --no-autocc --gerrit", ""),
       Cmd("git cl land --bypass-hooks -f", ""),
       Cmd("git fetch", ""),
       Cmd("git log -1 --format=%H --grep="
@@ -1005,7 +1005,9 @@ This only works with a Google account.
 
 CQ_INCLUDE_TRYBOTS=master.tryserver.blink:linux_trusty_blink_rel;luci.chromium.try:linux_optional_gpu_tests_rel;luci.chromium.try:mac_optional_gpu_tests_rel;luci.chromium.try:win_optional_gpu_tests_rel;luci.chromium.try:android_optional_gpu_tests_rel
 
-TBR=reviewer@chromium.org"""
+TBR=reviewer@chromium.org
+
+Binary-Size: autoroller"""
 
   # Snippet from the original DEPS file.
   FAKE_DEPS = """

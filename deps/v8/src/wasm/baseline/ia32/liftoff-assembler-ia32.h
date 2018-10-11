@@ -43,10 +43,7 @@ inline Operand GetHalfStackSlot(uint32_t half_index) {
 inline Operand GetInstanceOperand() { return Operand(ebp, -8); }
 
 static constexpr LiftoffRegList kByteRegs =
-    LiftoffRegList::FromBits<Register::ListOf<eax, ecx, edx, ebx>()>();
-static_assert(kByteRegs.GetNumRegsSet() == 4, "should have four byte regs");
-static_assert((kByteRegs & kGpCacheRegList) == kByteRegs,
-              "kByteRegs only contains gp cache registers");
+    LiftoffRegList::FromBits<Register::ListOf<eax, ecx, edx>()>();
 
 inline void Load(LiftoffAssembler* assm, LiftoffRegister dst, Register base,
                  int32_t offset, ValueType type) {
@@ -119,6 +116,11 @@ inline void SpillRegisters(LiftoffAssembler* assm, Regs... regs) {
   for (LiftoffRegister r : {LiftoffRegister(regs)...}) {
     if (assm->cache_state()->is_used(r)) assm->SpillRegister(r);
   }
+}
+
+inline void SignExtendI32ToI64(Assembler* assm, LiftoffRegister reg) {
+  assm->mov(reg.high_gp(), reg.low_gp());
+  assm->sar(reg.high_gp(), 31);
 }
 
 constexpr DoubleRegister kScratchDoubleReg = xmm7;
@@ -247,8 +249,7 @@ void LiftoffAssembler::Load(LiftoffRegister dst, Register src_addr,
       break;
     case LoadType::kI64Load8S:
       movsx_b(dst.low_gp(), src_op);
-      mov(dst.high_gp(), dst.low_gp());
-      sar(dst.high_gp(), 31);
+      liftoff::SignExtendI32ToI64(this, dst);
       break;
     case LoadType::kI32Load16U:
       movzx_w(dst.gp(), src_op);
@@ -262,8 +263,7 @@ void LiftoffAssembler::Load(LiftoffRegister dst, Register src_addr,
       break;
     case LoadType::kI64Load16S:
       movsx_w(dst.low_gp(), src_op);
-      mov(dst.high_gp(), dst.low_gp());
-      sar(dst.high_gp(), 31);
+      liftoff::SignExtendI32ToI64(this, dst);
       break;
     case LoadType::kI32Load:
       mov(dst.gp(), src_op);
@@ -274,8 +274,7 @@ void LiftoffAssembler::Load(LiftoffRegister dst, Register src_addr,
       break;
     case LoadType::kI64Load32S:
       mov(dst.low_gp(), src_op);
-      mov(dst.high_gp(), dst.low_gp());
-      sar(dst.high_gp(), 31);
+      liftoff::SignExtendI32ToI64(this, dst);
       break;
     case LoadType::kI64Load: {
       // Compute the operand for the load of the upper half.
@@ -664,6 +663,12 @@ void LiftoffAssembler::emit_i32_shr(Register dst, Register src, Register amount,
                               pinned);
 }
 
+void LiftoffAssembler::emit_i32_shr(Register dst, Register src, int amount) {
+  if (dst != src) mov(dst, src);
+  DCHECK(is_uint5(amount));
+  shr(dst, amount);
+}
+
 bool LiftoffAssembler::emit_i32_clz(Register dst, Register src) {
   Label nonzero_input;
   Label continuation;
@@ -760,7 +765,7 @@ void LiftoffAssembler::emit_i64_mul(LiftoffRegister dst, LiftoffRegister lhs,
   Register lhs_hi = ecx;
   Register lhs_lo = dst_lo;
   Register rhs_hi = dst_hi;
-  Register rhs_lo = ebx;
+  Register rhs_lo = esi;
 
   // Spill all these registers if they are still holding other values.
   liftoff::SpillRegisters(this, dst_hi, dst_lo, lhs_hi, rhs_lo);
@@ -776,7 +781,7 @@ void LiftoffAssembler::emit_i64_mul(LiftoffRegister dst, LiftoffRegister lhs,
   imul(rhs_hi, lhs_lo);
   // Add them: lhs_hi'' = lhs_hi' + rhs_hi' = lhs_hi * rhs_lo + rhs_hi * lhs_lo.
   add(lhs_hi, rhs_hi);
-  // Third mul: edx:eax (dst_hi:dst_lo) = eax * ebx (lhs_lo * rhs_lo).
+  // Third mul: edx:eax (dst_hi:dst_lo) = eax * esi (lhs_lo * rhs_lo).
   mul(rhs_lo);
   // Add lhs_hi'' to dst_hi.
   add(dst_hi, lhs_hi);
@@ -877,6 +882,13 @@ void LiftoffAssembler::emit_i64_shr(LiftoffRegister dst, LiftoffRegister src,
                                     Register amount, LiftoffRegList pinned) {
   liftoff::Emit64BitShiftOperation(this, dst, src, amount,
                                    &TurboAssembler::ShrPair_cl, pinned);
+}
+
+void LiftoffAssembler::emit_i64_shr(LiftoffRegister dst, LiftoffRegister src,
+                                    int amount) {
+  if (dst != src) Move(dst, src, kWasmI64);
+  DCHECK(is_uint6(amount));
+  ShrPair(dst.high_gp(), dst.low_gp(), amount);
 }
 
 void LiftoffAssembler::emit_i32_to_intptr(Register dst, Register src) {
@@ -1012,6 +1024,20 @@ void LiftoffAssembler::emit_f32_max(DoubleRegister dst, DoubleRegister lhs,
                                     liftoff::MinOrMax::kMax);
 }
 
+void LiftoffAssembler::emit_f32_copysign(DoubleRegister dst, DoubleRegister lhs,
+                                         DoubleRegister rhs) {
+  static constexpr int kF32SignBit = 1 << 31;
+  Register scratch = GetUnusedRegister(kGpReg).gp();
+  Register scratch2 =
+      GetUnusedRegister(kGpReg, LiftoffRegList::ForRegs(scratch)).gp();
+  Movd(scratch, lhs);                      // move {lhs} into {scratch}.
+  and_(scratch, Immediate(~kF32SignBit));  // clear sign bit in {scratch}.
+  Movd(scratch2, rhs);                     // move {rhs} into {scratch2}.
+  and_(scratch2, Immediate(kF32SignBit));  // isolate sign bit in {scratch2}.
+  or_(scratch, scratch2);                  // combine {scratch2} into {scratch}.
+  Movd(dst, scratch);                      // move result into {dst}.
+}
+
 void LiftoffAssembler::emit_f32_abs(DoubleRegister dst, DoubleRegister src) {
   static constexpr uint32_t kSignBit = uint32_t{1} << 31;
   if (dst == src) {
@@ -1119,6 +1145,24 @@ void LiftoffAssembler::emit_f64_min(DoubleRegister dst, DoubleRegister lhs,
                                     DoubleRegister rhs) {
   liftoff::EmitFloatMinOrMax<double>(this, dst, lhs, rhs,
                                      liftoff::MinOrMax::kMin);
+}
+
+void LiftoffAssembler::emit_f64_copysign(DoubleRegister dst, DoubleRegister lhs,
+                                         DoubleRegister rhs) {
+  static constexpr int kF32SignBit = 1 << 31;
+  // On ia32, we cannot hold the whole f64 value in a gp register, so we just
+  // operate on the upper half (UH).
+  Register scratch = GetUnusedRegister(kGpReg).gp();
+  Register scratch2 =
+      GetUnusedRegister(kGpReg, LiftoffRegList::ForRegs(scratch)).gp();
+
+  Pextrd(scratch, lhs, 1);                 // move UH of {lhs} into {scratch}.
+  and_(scratch, Immediate(~kF32SignBit));  // clear sign bit in {scratch}.
+  Pextrd(scratch2, rhs, 1);                // move UH of {rhs} into {scratch2}.
+  and_(scratch2, Immediate(kF32SignBit));  // isolate sign bit in {scratch2}.
+  or_(scratch, scratch2);                  // combine {scratch2} into {scratch}.
+  movsd(dst, lhs);                         // move {lhs} into {dst}.
+  Pinsrd(dst, scratch, 1);                 // insert {scratch} into UH of {dst}.
 }
 
 void LiftoffAssembler::emit_f64_max(DoubleRegister dst, DoubleRegister lhs,
@@ -1266,7 +1310,7 @@ bool LiftoffAssembler::emit_type_conversion(WasmOpcode opcode,
       return true;
     case kExprI64SConvertI32:
       if (dst.low_gp() != src.gp()) mov(dst.low_gp(), src.gp());
-      mov(dst.high_gp(), src.gp());
+      if (dst.high_gp() != src.gp()) mov(dst.high_gp(), src.gp());
       sar(dst.high_gp(), 31);
       return true;
     case kExprI64UConvertI32:
@@ -1316,6 +1360,32 @@ bool LiftoffAssembler::emit_type_conversion(WasmOpcode opcode,
     default:
       return false;
   }
+}
+
+void LiftoffAssembler::emit_i32_signextend_i8(Register dst, Register src) {
+  movsx_b(dst, src);
+}
+
+void LiftoffAssembler::emit_i32_signextend_i16(Register dst, Register src) {
+  movsx_w(dst, src);
+}
+
+void LiftoffAssembler::emit_i64_signextend_i8(LiftoffRegister dst,
+                                              LiftoffRegister src) {
+  movsx_b(dst.low_gp(), src.low_gp());
+  liftoff::SignExtendI32ToI64(this, dst);
+}
+
+void LiftoffAssembler::emit_i64_signextend_i16(LiftoffRegister dst,
+                                               LiftoffRegister src) {
+  movsx_w(dst.low_gp(), src.low_gp());
+  liftoff::SignExtendI32ToI64(this, dst);
+}
+
+void LiftoffAssembler::emit_i64_signextend_i32(LiftoffRegister dst,
+                                               LiftoffRegister src) {
+  if (dst.low_gp() != src.low_gp()) mov(dst.low_gp(), src.low_gp());
+  liftoff::SignExtendI32ToI64(this, dst);
 }
 
 void LiftoffAssembler::emit_jump(Label* label) { jmp(label); }
